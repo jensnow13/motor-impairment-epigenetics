@@ -1,0 +1,91 @@
+---
+title: "sarah's code"
+output: html_document
+---
+
+```
+```
+```{r}
+baseDir=("/group/canc2/puumba/Data/InfiniumData/jen. snow/project/Idat-SDF")
+library(minfi)
+targets_gen2 <- read.metharray.sheet(baseDir)
+library(ChAMP)
+myLoad <- champ.load(directory=baseDir,
+                     filterXY=TRUE,
+                     filterSNPs=TRUE,
+                     arraytype="450K")
+```
+
+quality control
+```{r}
+champ.QC(beta=myLoad$beta,
+         pheno=myLoad$pd$CP,
+         resultsDir=baseDir,
+         dendrogram=FALSE)
+```
+
+#Normalize
+```
+```
+```{r}
+myNorm <- champ.norm(arraytype="450K")
+
+champ.QC(beta=myNorm,
+         pheno=myLoad$pd$CP,
+         resultsDir=baseDir,
+         dendrogram=FALSE)
+```
+
+SVD
+```{r}
+library(tidyverse)
+subpheno <- myLoad$pd %>%
+  select(ABCtotal_cutoff,
+         postnatal_steroids,
+         ga_week_cutoff,
+         sex,
+         weight.SDS,
+         Slide,
+         Array,
+         BPD_36_numeric,
+         CP,
+         preeclampsia_numeric,
+         delivery_numeric,
+         infertility_numeric,
+         any_surfactant_numeric,
+         IQ_group,
+         BMI_group,
+         Twin_Group)
+champ.SVD(beta=myNorm,
+          pd=subpheno,
+          resultsDir="./CHAMP_SVDimages_Sarah/")
+
+```
+#In case you want to adjust for batch
+```{r}
+library(sva)
+M <- logit2(myNorm)
+modcombat <- model.matrix(~1, data=subpheno)
+batch <- subpheno$Slide
+myCombat <- ComBat(dat = M, batch = batch, mod = modcombat)
+myCombat <- ilogit2(myCombat)
+
+champ.SVD(beta=myCombat,
+          pd=subpheno,
+          resultsDir="./CHAMP_SVDimages_Sarah_batchcorrected/")
+library(sva)
+M <- logit2(myCombat)
+modcombat <- model.matrix(~1, data=subpheno)
+batch <- subpheno$Array
+myCombat <- ComBat(dat = M, batch = batch, mod = modcombat)
+myCombat <- ilogit2(myCombat)
+
+champ.SVD(beta=myCombat,
+          pd=subpheno,
+          resultsDir="./CHAMP_SVDimages_Sarah_batchandpositioncorrected/")
+
+```
+Linear regression
+```{r}
+
+```

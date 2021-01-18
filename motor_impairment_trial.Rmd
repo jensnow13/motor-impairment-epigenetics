@@ -1,0 +1,473 @@
+---
+title: "Motor_impairment_trial"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+#Setting base directory and loading libraries required for analysis
+```{r}
+baseDir=("/group/canc2/puumba/Data/InfiniumData/JeffCraig/VICS/Idat-SDF")
+library(ggbio)
+library(ExperimentHub)
+library(missMethyl)
+library(limma)
+library(minfi)
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+library(ruv)
+library(RColorBrewer)
+library(matrixStats)
+library(gplots)
+library(WGCNA)
+library(lumi)
+library(ggplot2)
+library(FlowSorted.CordBlood.450k)
+library(tidyverse)
+library(topconfects)
+
+```
+#Reading in annotation for 450k methylation arrays
+```{r}
+ann450 = getAnnotation(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+```
+#Reading in the sample summary sheet (metadata)
+```{r}
+#Reading in the sample summary sheet (metadata)
+targets_gen = read.metharray.sheet(baseDir, pattern = "motor_biom _ MABC_scores_mod.CSV")
+
+```
+
+#Reading array raw data and assigning sample names with array data
+#targets$ID = paste(targets$Sample_Group,targets_gen$Sample_Name,sep=".")
+```{r}
+rgSet = read.metharray.exp(targets = targets_gen)
+sampleNames(rgSet) = targets_gen$casenum
+
+```
+#Quality control
+```{r}
+detP = detectionP(rgSet)
+qcReport(rgSet, sampNames=targets_gen$casenum, pdf="qc-report_motor_impairment.pdf")
+pdf("mean_detection_motor_impairment.pdf",width=14)
+par(mfrow=c(1,2))
+cols=brewer.pal(4,"Set1")
+barplot(apply(detP,2,mean),col=as.numeric(factor(targets_gen$casenum)),las=2,cex.names= 0.5, cex.axis=0.75,main="Mean detection p-values of probe signals",ylab="Mean detection p-value")
+barplot(apply(detP,2,mean),col=as.numeric(factor(targets_gen$casenum)),las=2,cex.names= 0.5, cex.axis=0.75,ylim=c(0,0.010),main="Mean detection p-values of probe signals",ylab="Mean detection p-value")
+dev.off()
+```
+#Preprocessing
+```{r}
+mset.raw = preprocessRaw(rgSet)
+```
+#Data exploration
+```{r}
+pdf("mds_plots_motor_impairment.pdf",width=14)
+par(mfrow=c(1,2))
+mdsPlot(mset.raw, sampGroups = targets_gen$ABCtotal_cutoff, sampNames=targets_gen$casename,legendPos="bottom",main="MABCtotal",pch=20)
+mdsPlot(mset.raw, sampGroups = targets_gen$CP, sampNames=targets_gen$casename,legendPos="bottom",main="CP",pch=20)
+mdsPlot(mset.raw, sampGroups = targets_gen$sex, sampNames=targets_gen$casename,legendPos="bottom",main="sex",pch=20)
+mdsPlot(mset.raw, sampGroups = targets_gen$BPD_36_numeric, sampNames=targets_gen$casename,legendPos="bottom",main="BPD_36",pch=20)
+mdsPlot(mset.raw, sampGroups = targets_gen$postnatal_steroids, sampNames=targets_gen$casename,legendPos="bottom",main="postnatal_steroids",pch=20)
+mdsPlot(mset.raw, sampGroups = targets_gen$ga_week_cutoff, sampNames=targets_gen$casename,legendPos="bottom",main="gestational_age",pch=20)
+dev.off()
+```
+
+#Normalisation
+`
+```{r}
+mSetSw = preprocessSWAN(rgSet)
+densityPlot(getBeta(mSetSw),main="SWAN")
+```
+```{r}
+mSetSq = preprocessQuantile(rgSet)
+pdf("normalisation_motor_impairment.pdf",width=14)
+par(mfrow=c(1,3))
+densityPlot(getBeta(mset.raw), sampGroups = targets_gen$casenum, main= "Raw", legend = FALSE)
+densityPlot(getBeta(mSetSw), sampGroups = targets_gen$casenum,main="SWAN", legend = FALSE)
+densityPlot(getBeta(mSetSq), sampGroups = targets_gen$casenum,main="SQN", legend = FALSE)
+```
+
+#Cell type composition analysis
+
+```{r}
+
+pdf("cell_type_motor_impairment21.pdf",width=14)
+rgSet$Slide <- as.numeric(rgSet$Slide)
+rgSet$Sex<- as.character(rgSet$sex)
+rgSet$casenum<- as.character(rgSet$casenum)
+cellCounts_new <- estimateCellCounts(rgSet, compositeCellType = "CordBlood", processMethod = "auto", probeSelect = "auto", cellTypes = c("CD8T","CD4T", "NK","nRBC","Bcell","Mono","Gran"), referencePlatform = c("IlluminaHumanMethylation450k"),returnAll = FALSE, meanPlot = TRUE)
+write.csv(cellCounts_new,file="cell_counts.csv",row.names=TRUE)
+MY.DATA<-read.csv("cell_counts.csv",  header=TRUE)
+cellcounts2<-data.frame(MY.DATA)
+colnames(cellcounts2)[1] <- "casenum"
+view(cellcounts2)
+
+targets_gen2<-merge(targets_gen, cellcounts2, by="casenum")
+write.csv(targets_gen2,file="targets_gen2.csv",row.names=TRUE)
+```
+
+```{r}
+#plot cell type composition by sample group
+par(mfrow=c(1,1))
+a = targets_gen2[targets_gen2$ABCtotal_cutoff == "1",]
+b = targets_gen2[targets_gen2$ABCtotal_cutoff == "2",]
+age.pal <- brewer.pal(8,"Set1")
+boxplot(a, xlim=c(0, 18), xaxt="n",
+        col=age.pal[1], main="", ylab="Cell type proportion")
+boxplot(b, xaxt="n", add=TRUE, col=age.pal[2])
+#axis(1, labels=colnames(a), tick=TRUE) 
+#axis(1, labels=colnames(a), tick=TRUE)
+
+age.pal <- brewer.pal(8,"Set1")
+boxplot(a, at=0:5*3+ 1, xlim=c(0, 18), ylim=range(a,b, na.rm = TRUE), xaxt="n",
+        col=age.pal[1], main="", ylab="Cell type proportion")
+boxplot(b, at=0: 5*3+ 2, xaxt="n", add=TRUE, col=age.pal[2])
+axis(1, at=0:5*3+ 1.5, labels=colnames(a), tick=TRUE) 
+
+#legend("topleft", legend=c("Low","Moderate", "High"), fill=age.pal, cex=.7)
+
+#wilcox.test(b[,"Gran"],c[,"Gran"], paired=FALSE)
+#None of the p-values are less than 0.05 - separate word document in folder
+```
+
+
+#plot cell type composition by sample group
+```{r}
+pdf("cell_type_boxplot_motor_impairment.pdf",width=14)
+boxplot(cellCounts_new,xlab="Cell type proportion",ylab="cell percentage")
+```
+#None of the p-values are less than 0.05 - separate word document in folder
+#Filtering low quality probes
+```{r}
+keepProbes = rowSums(detP < 0.01) == ncol(detP)
+mSetSqFlt = mSetSq[keepProbes,]
+gmSetSqFlt = mapToGenome(mSetSqFlt)
+```
+#remove SNPs
+```{r}
+gmSetSqFlt = dropLociWithSnps(gmSetSqFlt, snps = c("CpG", "SBE"))
+```
+
+#Removing cross-reactive probes
+```{r}
+Xreact = read.csv(file="/group/canc2/puumba/Data/InfiniumData/JeffCraig/VICS/48639-non-specific-probes-Illumina450k.csv", stringsAsFactors=FALSE)
+noXreact = !(featureNames(gmSetSqFlt) %in% Xreact$TargetID)
+gmSetSqFlt = gmSetSqFlt[noXreact,]
+```
+
+#Removing probes on X and Y chromosomes
+```{r}
+autosomes = !(featureNames(gmSetSqFlt) %in% ann450$Name[ann450$chr %in% c("chrX","chrY")])
+gmSetSqFlt = gmSetSqFlt[autosomes,]
+
+```
+#Relative log expression (RLE plot)
+
+```{r}
+mValsSq = getM(gmSetSqFlt)
+medSq = apply(mValsSq, 1, median)
+YSw = mValsSq - medSq
+par(mfrow=c(1,2))
+pdf("rle_plot_sep9.pdf")
+boxplot(YSw,outline=FALSE,ylim=c(-1.5,1.5), ylab="Relative Log Methylation Value", cols=as.character(factor(targets_gen$ABCtotal_cutoff,)),xaxt="none")
+title(xlab="Samples",cex=2, line=1)
+dev.off()
+```
+```{r}
+#MDS plots generation after filtering 
+pdf("mds_plots_motor_impairment_normalisation.pdf",width=14)
+par(mfrow=c(1,2))
+mdsPlot(mValsSq, sampGroups = targets_gen$ABCtotal_cutoff, sampNames=targets_gen$casename,legendPos="bottom",main="MABCtotal",pch=20)
+mdsPlot(mValsSq, sampGroups = targets_gen$CP, sampNames=targets_gen$casename,legendPos="bottom",main="CP",pch=20)
+mdsPlot(mValsSq, sampGroups = targets_gen$sex, sampNames=targets_gen$casename,legendPos="bottom",main="sex",pch=20)
+mdsPlot(mValsSq, sampGroups = targets_gen$BPD_36_numeric, sampNames=targets_gen$casename,legendPos="bottom",main="BPD_36",pch=20)
+mdsPlot(mValsSq, sampGroups = targets_gen$postnatal_steroids, sampNames=targets_gen$casename,legendPos="bottom",main="postnatal_steroids",pch=20)
+mdsPlot(mValsSq, sampGroups = targets_gen$ga_week_cutoff, sampNames=targets_gen$casename,legendPos="bottom",main="gestational_age",pch=20)
+dev.off()
+```
+
+#MDS plots generation after filtering by dimension
+```{r}
+
+pal = brewer.pal(8, "Dark2")
+mds1Sq = plotMDS(mValsSq, top=1000, gene.selection="common",dim.plot=c(1,2))
+mds2Sq = plotMDS(mValsSq, top=1000, gene.selection="common",dim.plot=c(1,3))
+mds3Sq = plotMDS(mValsSq, top=1000, gene.selection="common",dim.plot=c(2,3))
+mds4Sq = plotMDS(mValsSq, top=1000, gene.selection="common",dim.plot=c(3,4))
+pdf("MDS_plot_normalised_dimensions_motor_impairment.pdf",height=14,width=14)
+par(mfrow=c(2,2))
+plotMDS(mds1Sq, pch=19, col=pal[as.factor(targets_gen$ABCtotal_cutoff)])
+plotMDS(mds2Sq, pch=19, col=pal[as.factor(targets_gen$ABCtotal_cutoff)])
+plotMDS(mds3Sq, pch=19, col=pal[as.factor(targets_gen$ABCtotal_cutoff)])
+plotMDS(mds4Sq, pch=19, col=pal[as.factor(targets_gen$ABCtotal_cutoff)])
+plotMDS(mds1Sq, pch=19, col=pal[as.factor(targets_gen$postnatal_steroids)])
+plotMDS(mds2Sq, pch=19, col=pal[as.factor(targets_gen$postnatal_steroids)])
+plotMDS(mds3Sq, pch=19, col=pal[as.factor(targets_gen$postnatal_steroids)])
+plotMDS(mds4Sq, pch=19, col=pal[as.factor(targets_gen$postnatal_steroids)])
+plotMDS(mds1Sq, pch=19, col=pal[as.factor(targets_gen$ga_week_cutoff)])
+plotMDS(mds2Sq, pch=19, col=pal[as.factor(targets_gen$ga_week_cutoff)])
+plotMDS(mds3Sq, pch=19, col=pal[as.factor(targets_gen$ga_week_cutoff)])
+plotMDS(mds4Sq, pch=19, col=pal[as.factor(targets_gen$ga_week_cutoff)])
+plotMDS(mds1Sq, pch=19, col=pal[as.factor(targets_gen$BPD_36_numeric)])
+plotMDS(mds2Sq, pch=19, col=pal[as.factor(targets_gen$BPD_36_numeric)])
+plotMDS(mds3Sq, pch=19, col=pal[as.factor(targets_gen$BPD_36_numeric)])
+plotMDS(mds4Sq, pch=19, col=pal[as.factor(targets_gen$BPD_36_numeric)])
+plotMDS(mds1Sq, pch=19, col=pal[as.factor(targets_gen$sex)])
+plotMDS(mds2Sq, pch=19, col=pal[as.factor(targets_gen$sex)])
+plotMDS(mds3Sq, pch=19, col=pal[as.factor(targets_gen$sex)])
+plotMDS(mds4Sq, pch=19, col=pal[as.factor(targets_gen$sex)])
+plotMDS(mds1Sq, pch=19, col=pal[as.factor(targets_gen$CP)])
+plotMDS(mds2Sq, pch=19, col=pal[as.factor(targets_gen$CP)])
+plotMDS(mds3Sq, pch=19, col=pal[as.factor(targets_gen$CP)])
+plotMDS(mds4Sq, pch=19, col=pal[as.factor(targets_gen$CP)])
+plotMDS(mds1Sq, pch=19, col=pal[as.factor(targets_gen$Twin_Group)])
+plotMDS(mds2Sq, pch=19, col=pal[as.factor(targets_gen$Twin_Group)])
+plotMDS(mds3Sq, pch=19, col=pal[as.factor(targets_gen$Twin_Group)])
+plotMDS(mds4Sq, pch=19, col=pal[as.factor(targets_gen$Twin_Group)])
+dev.off()
+```
+
+#Principal Component Analysis (PCA)
+```{r}
+fit <- prcomp(t(mValsSq),center = TRUE, scale = TRUE,retx=TRUE)
+loadings = fit$x
+plot(fit,type="lines")
+nGenes = nrow(mValsSq)
+nSamples = ncol(mValsSq)
+datTraits = targets_gen[,c(3,5,7,10,12,13,16,27,40,41,51,52)]
+moduleTraitCor = cor(loadings[,1:6], datTraits, use = "p")
+moduleTraitPvalue = corPvalueStudent(moduleTraitCor, nSamples)
+par(cex=0.75, mar = c(6, 8.5, 3, 3))
+textMatrix = paste(signif(moduleTraitCor, 2), "\n(", signif(moduleTraitPvalue, 1), ")", sep = "");
+dim(textMatrix) = dim(moduleTraitCor)
+pdf("PCA_heatmap_motor_impairment_blood.pdf",height=8,width=8)
+labeledHeatmap(Matrix = t(moduleTraitCor), xLabels = colnames(loadings[,1:6]), yLabels = names(datTraits), colorLabels = FALSE, colors = blueWhiteRed(6), textMatrix = t(textMatrix), setStdMargins = FALSE, cex.text = 0.5, cex.lab.y = 0.6, zlim = c(-1,1), main = paste("PCA-trait relationships: Top principal components"))
+dev.off()
+
+```
+
+Probe-wise differential methylation analysis
+
+```{r}sex<-targets_gen$sex
+ga<-targets_gen$ga_week
+design <- model.matrix(~ABCtotal+sex+ga, data=targets_gen)
+```
+```{r}
+targetsgen3<-targets_gen2[-which(targets_gen2$ABCtotal_cutoff==0),]
+mDat =mValsSq[,-which(targets_gen2$ABCtotal_cutoff==0)]
+bDat = ilogit2(mDat)
+MABC<-targets_gen$ABCtotal_cutoff
+design <- model.matrix(~ABCtotal_cutoff+sex+ga_week+nRBC+Bcell+Mono+NK+CD8T+
+CD4T,  data=targetsgen3)
+fit <- lmFit(mDat, design)
+fit2 <- eBayes(fit)
+summary(decideTests(fit2,p.value = 0.05))
+top = topTable(fit2,coef="ABCtotal_cutoff",num=Inf)
+ann_sub = 
+  ann450[,c("chr","pos","strand","Name","Islands_Name","Relation_to_Island","UCSC_RefGene_Name","UCSC_RefGene_Group")]
+output = merge(ann450,top,by.x="Name",by.y="row.names")
+#output_full_epicanno = merge(ann_epic,top,by.x="Name",by.y="row.names")
+write.csv(output[order(output$adj.P.Val),],file="Fullcohort_MABC_top_dmps_BIO2.csv",row.names=FALSE)
+head(top)
+confects<-limma_confects(fit,coef ="ABCtotal_cutoff", fdr = 0.05, step = 0.001, trend = FALSE,full = FALSE)
+confects
+fil <- tempfile("motor_impairment_trial.Rmd", fileext = ".rds")
+saveRDS(confects, file = "fil", ascii = FALSE, version = NULL,compress = TRUE, refhook = NULL)
+
+
+
+```
+
+```{r}
+
+mDat =mValsSq
+design <- model.matrix(~CP+sex+ga_week +nRBC+Bcell+Mono+NK+CD8T+
+CD4T, data=targets_gen2)
+fit <- lmFit(mDat, design)
+fit2 <- eBayes(fit)
+summary(decideTests(fit2,p.value = 0.05))
+top = topTable(fit2,coef="CP",num=Inf)
+ann_sub = 
+  ann450[,c("chr","pos","strand","Name","Islands_Name","Relation_to_Island","UCSC_RefGene_Name","UCSC_RefGene_Group")]
+output = merge(ann450,top,by.x="Name",by.y="row.names")
+#output_full_epicanno = merge(ann_epic,top,by.x="Name",by.y="row.names")
+write.csv(output[order(output$adj.P.Val),],file="Fullcohort_CP_top_dmps_BIO2.csv",row.names=FALSE)
+cp<-output[order(output$adj.P.Val)
+ confects<-limma_confects(fit,coef ="CP", fdr = 0.05, step = 0.001, trend = FALSE,full = FALSE)
+confects          
+head(top)
+
+```
+```
+preprocessNoob(rgSet, offset = 15, dyeCorr = TRUE, verbose = FALSE,
+               dyeMethod=c("single", "reference"))
+
+pheno <- pData(gset.fun)$casenum
+designMatrix <- model.matrix(~ pheno)
+dmrs_0.02 <- bumphunter(gset.funnorm, design = designMatrix, cutoff = 0.02, B=1000, type="Beta")
+names(dmrs_0.02)
+head(dmrs_0.02$table, n=20)
+write.csv(dmrs_0.02$table, file = "bumphunter_1000.csv", row.names = TRUE)
+```
+
+```{r}
+MOHANDASUP<-list()
+MONHANDASDOWN<-
+fgseaResup <- fgsea(MONHANDASUP,cp, maxSize=1000)
+fgseaResdown <- fgsea(MONHANDASDOWN,cp, maxSize=1000)
+```
+
+
+
+
+```{r}
+#scatter plots, histogram and boxplots
+baseDir=("/group/canc2/puumba/Data/InfiniumData/jen. snow")
+res <- read.csv("Fullcohort_CP_top_dmps.csv", header = TRUE)
+ggplot(res, aes(x=P.Value))+ geom_histogram(binwidth=0.05,col="red", 
+                 fill="green", 
+                 alpha=.2)
+cpg<-read.csv("boxplot_cpg.csv", header = TRUE)
+ggplot(cpg, aes(x=CP, y=beta.cp)) + geom_boxplot() 
+ggplot(cpg, aes(x=mabc, y=mABC.BETA)) + geom_boxplot(
+ggplot(targets_gen2, aes(x=ABCtotal_cutoff, y=CD4T, )) + geom_boxplot()
+ggplot(targets_gen2, aes(x=ABCtotal_cutoff, y=CD8T)) + geom_boxplot()
+ggplot(targets_gen2, aes(x=ABCtotal_cutoff, y=Mono)) + geom_boxplot()
+ggplot(targets_gen2, aes(x=ABCtotal_cutoff, y=Bcell)) + geom_boxplot()
+ggplot(targets_gen2, aes(x=ABCtotal_cutoff, y=nRBC)) + geom_boxplot()
+ggplot(targets_gen2, aes(x=ABCtotal_cutoff, y=NK)) + geom_boxplot()
+dev.off()
+```
+
+
+```{r}
+
+```
+
+
+```{r}
+
+library("DMRcate")
+myannotation <- cpg.annotate("array", mDat, analysis.type="differential", design=design, coef=13, fdr = 0.1)
+dmrcoutput <- dmrcate(myannotation, lambda=1000, C=2, pcutoff = 0.05)
+results.ranges <- extractRanges(dmrcoutput, genome = "hg19") 
+head(dmrcoutput$results)
+length(dmrcoutput$results)
+write.csv(dmrcoutput$results, file = "dmrcoutput.csv", row.names = TRUE)
+coords <- strsplit2(dmrcoutput$results$coord[1],":")
+chrom_dmrc <- coords[1]
+start_dmrc <- as.numeric(strsplit2(coords[2],"-")[1])
+end_dmrc <- as.numeric(strsplit2(coords[2],"-")[2]) 
+minbase_dmrc <- start - (0.25*(end-start))
+maxbase_dmrc <- end + (0.25*(end-start))
+```
+```{r}
+
+```
+
+
+
+
+
+```{r}
+
+#To create stacked barplots
+ggplot(targets_gen, aes(fill=sex, y=ABCtotal, x= ABCtotal)) + geom_bar(position="stack", stat="identity")
+
+#to create scatter plot for two variables
+ggplot(targets_gen2, aes(x=, y=ABCtotal)) + geom_point()
+
+#to create split panel scatter plot 
+
+#to create boxplots for cell types
+ggplot(targets_gen, aes(x=celltype, y=percentage, fill=ABCtotal_cutoff)) +
+  geom_boxplot() 
+
+```{r}
+#Gene Ontology analysis (gometh): top 1000 probes
+#after sorting csv by pvalue
+baseDir=("/group/canc2/puumba/Data/InfiniumData/jen. snow")
+res <- read.csv("Fullcohort_MABC_top_dmps_BIO2.csv", header = TRUE)
+sigCpGs_1k = res$rank[1:1000]
+#total number
+length(sigCpGs_1k)
+sigCpGs_1k = as.character(sigCpGs_1k)
+all = res
+length(all)
+#gometh()
+par(mfrow=c(1,1))
+gometh_1k <- gometh(sig.cpg=sigCpGs_1k, all.cpg=all, plot.bias=TRUE)
+gometh_kegg <- gometh(sig.cpg = sigCpGs_1k, all.cpg = all, collection = "KEGG", prior.prob=TRUE)
+topKEGG(gometh_kegg)
+write.csv(gometh_1k, file = "GOterms_1k_cp.csv", row.names = TRUE)
+write.csv(gometh_kegg, file = "GOmeth_kegg_cp.csv", row.names = TRUE)
+#top GO terms
+topGO(gometh_1k, ontology = "BP", number = 20L)
+## Total number of significant GO categories at 5% FDR
+```
+
+
+```{r}
+sum(gometh_kegg$FDR<0.5) 
+```
+
+
+```{r}
+
+baseDir=("/group/canc2/puumba/Data/InfiniumData/jen. snow")
+res <- read.csv("Fullcohort_CP_top_dmps_BIO2.csv", header = TRUE)
+ggplot(res, aes(x=P.Value))+ geom_histogram(binwidth=0.05,col="red", 
+                 fill="green", 
+                 alpha=.2)
+baseDir=("/group/canc2/puumba/Data/InfiniumData/jen. snow")
+res <- read.csv("Fullcohort_MABC_top_dmps_BIO2.csv", header = TRUE)
+ggplot(res, aes(x=P.Value))+ geom_histogram(binwidth=0.05,col="red", 
+                 fill="green", 
+                 alpha=.2)
+baseDir=("/group/canc2/puumba/Data/InfiniumData/jen. snow")
+res <- read.csv("Fullcohort_CP_top_dmps_CHAMP.csv", header = TRUE)
+ggplot(res, aes(x=P.Value))+ geom_histogram(binwidth=0.05,col="red", 
+                 fill="green", 
+                 alpha=.2)
+baseDir=("/group/canc2/puumba/Data/InfiniumData/jen. snow")
+res <- read.csv("Fullcohort_MABC_top_dmps_champ.csv", header = TRUE)
+ggplot(res, aes(x=P.Value))+ geom_histogram(binwidth=0.05,col="red", 
+                 fill="green", 
+                 alpha=.2)
+
+
+```
+
+```{r}
+#Gene Ontology analysis (gometh): top 1000 probes
+#after sorting csv by pvalue
+baseDir=("/group/canc2/puumba/Data/InfiniumData/jen. snow")
+res <- read.csv("Fullcohort_MABC_top_dmps_BIO2.csv", header = TRUE)
+sigCpGs_1k = res$Name[1:1000]
+#total number
+length(sigCpGs_1k)
+sigCpGs_1k = as.character(sigCpGs_1k)
+all = res$Name
+length(all)
+#gometh()
+par(mfrow=c(1,1))
+gometh_1k <- gometh(sig.cpg=sigCpGs_1k, all.cpg=all, plot.bias=TRUE)
+gometh_kegg <- gometh(sig.cpg = sigCpGs_1k, all.cpg = all, collection = "KEGG", prior.prob=TRUE)
+topKEGG(gometh_kegg)
+write.csv(gometh_1k, file = "GOterms_1k_MABC.csv", row.names = TRUE)
+write.csv(gometh_kegg, file = "GOmeth_kegg_MABC.csv", row.names = TRUE)
+#top GO terms
+topGO(gometh_1k, ontology = "BP", number = 20L)
+## Total number of significant GO categories at 5% FDR
+sum(gometh_kegg$FDR<0.5) 
+```
+
+
+
+
+
+
+
+
+
+
