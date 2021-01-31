@@ -1,0 +1,218 @@
+---
+title: "motor_impairment_prelim"
+output: pdf_document
+```{r}
+  #Setting base directory and loading libraries required for analysis
+baseDir=("/group/canc2/puumba/Data/InfiniumData/JeffCraig/VICS/Idat-SDF")
+library(missMethyl)
+library(limma)
+library(minfi)
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+library(IlluminaHumanMethylationEPICanno.ilm10b2.hg19)
+library(ruv)
+library(RColorBrewer)
+library(matrixStats)
+library(gplots)
+library(WGCNA)
+library(FlowSorted.Blood.450k)
+
+```
+#Reading in annotation for EPIC methylation arrays
+ann = getAnnotation(IlluminaHumanMethylationEPICanno.ilm10b2.hg19)
+```
+#Reading in the sample summary sheet (metadata)
+targets_gen = read.metharray.sheet(baseDir, pattern = "motor_biom _ MABC_scores_mod.csv")
+na.omit(targets_gen)
+```
+
+#Reading array raw data and assigning sample names with array data
+#targets$ID = paste(targets$Sample_Group,targets_gen$Sample_Name,sep=".")
+
+rgSet = read.metharray.exp(targets = targets_gen)
+sampleNames(rgSet) = targets_gen$casenum
+
+#Quality control
+detP = detectionP(rgSet)
+qcReport(rgSet, sampNames = targets_gen$casenum, pdf="qc-report_motor_impairment.pdf")
+pdf("mean_detection_motor_impairment.pdf",width=14)
+par(mfrow=c(1,2))
+cols=brewer.pal(4,"Set1")
+barplot(apply(detP,2,mean),col=as.numeric(factor(targets_gen$casenum)),las=2,cex.names= 0.5, cex.axis=0.75,main="Mean detection p-values of probe signals",ylab="Mean detection p-value")
+barplot(apply(detP,2,mean),col=as.numeric(factor(targets_gen$casenum)),las=2,cex.names= 0.5, cex.axis=0.75,ylim=c(0,0.010),main="Mean detection p-values of probe signals",ylab="Mean detection p-value")
+dev.off()
+
+#Preprocessing
+mset.raw = preprocessRaw(rgSet)
+
+#Data exploration
+pdf("mds_plots_motor_impairment.pdf",width=14)
+par(mfrow=c(1,2))
+mdsPlot(mset.raw, sampGroups = targets_gen$ABCtotal, sampNames=targets_gen$casename,legendPos="bottom",main="MABCtotal")
+mdsPlot(mset.raw, sampGroups = targets_gen$CP, sampNames=targets_gen$casename,legendPos="bottom",main="CP")
+mdsPlot(mset.raw, sampGroups = targets_gen$sex, sampNames=targets_gen$casenum,legendPos="bottom",main="sex")
+mdsPlot(mset.raw, sampGroups = targets_gen$BPD_36_numeric, sampNames=targets_gen$casenum,legendPos="bottom",main="BPD36")
+mdsPlot(mset.raw, sampGroups = targets_gen$Twin_Group, sampNames=targets_gen$casenum,legendPos="bottom",main="Twin")
+mdsPlot(mset.raw, sampGroups = targets_gen$ga_week, sampNames=targets_gen$casenum,legendPos="bottom",main="Ga_week")
+dev.off()
+```
+
+#Normalisation
+mSetSw = preprocessSWAN(rgSet)
+densityPlot(getBeta(mSetSw),main="SWAN")
+
+mSetSq = preprocessQuantile(rgSet)
+pdf("normalisation_motor_impairment.pdf",width=14)
+par(mfrow=c(1,3))
+densityPlot(getBeta(mset.raw), sampGroups = targets_gen$casenum, main= "Raw", legend = FALSE)
+densityPlot(getBeta(mSetSw), sampGroups = targets_gen$casenum,main="SWAN", legend = FALSE)
+densityPlot(getBeta(mSetSq), sampGroups = targets_gen$casenum,main="SQN", legend = FALSE)
+```
+
+#Cell type composition analysis
+
+```{r}
+library(FlowSorted.Blood.450k)
+pdf("cell_type_motor_impairment.pdf",width=14)
+
+rgSet$Sex<- as.character(rgSet$sex)
+rgSet$Sample_Name<- as.character(rgSet$Sample_Name)
+cellCounts_new <- estimateCellCounts(rgSet, compositeCellType = "Blood", processMethod = "auto", probeSelect = "auto", cellTypes = c("CD8T","CD4T", "NK","Bcell","Mono","Gran"), referencePlatform = c("IlluminaHumanMethylation450k"),returnAll = FALSE, meanPlot = TRUE)
+```
+
+
+#plot cell type composition by sample group
+```{r}
+par(mfrow=c(1,1))
+a = cellCounts_new[targets_gen$X15thcentile]
+b = cellCounts_new[targets_gen$CP]
+age.pal <- brewer.pal(8,"Set1")
+boxplot(a,at=0:5*3 + 1,  xlim=c(0, 18), ylim=range(a,c), xaxt="n",
+        col=age.pal[1], main="x15thcetile", ylab="Cell type proportion")
+boxplot(b, at=0:5*3 + 2, xaxt="n", add=TRUE, col=age.pal[2])
+axis(1, at=0:5*3 + 1.5, labels=colnames(a), tick=TRUE) 
+legend("topleft", legend=c("Low","Moderate", "High"), fill=age.pal, cex=.7)
+
+wilcox.test(b[,"Gran"],c[,"Gran"], paired=FALSE)
+
+#None of the p-values are less than 0.05 - separate word document in folder
+#Filtering low quality probes
+```{r}
+keepProbes = rowSums(detP < 0.01) == ncol(detP)
+mSetSqFlt = mSetSq[keepProbes,]
+gmSetSqFlt = mapToGenome(mSetSqFlt)
+
+```
+#remove SNPs
+```{r}
+gmSetSqFlt = dropLociWithSnps(gmSetSqFlt, snps = c("CpG", "SBE"))
+```
+
+#Removing cross-reactive probes
+```{r}
+Xreact = read.csv(file="/group/canc2/puumba/Data/InfiniumData/JeffCraig/VICS/48639-non-specific-probes-Illumina450k.csv", stringsAsFactors=FALSE)
+noXreact = !(featureNames(gmSetSqFlt) %in% Xreact$TargetID)
+gmSetSqFlt = gmSetSqFlt[noXreact,]
+```
+
+#Removing probes on X and Y chromosomes
+```{r}
+autosomes = !(featureNames(gmSetSqFlt) %in% ann$Name[ann$chr %in% c("chrX","chrY")])
+gmSetSqFlt = gmSetSqFlt[autosomes,]
+
+```
+#Relative log expression (RLE plot)
+
+```{r}
+mValsSw = getM(gmSetSqFlt)
+medSw = apply(mValsSw, 1, median)
+YSw = mValsSw - medSw
+par(mfrow=c(1,2))
+pdf("rle_plot_sep9.pdf")
+boxplot(YSw,outline=FALSE,ylim=c(-1.5,1.5), ylab="Relative Log Methylation Value", cols=as.character(factor(targets_gen$X15thcentile)),xaxt="none")
+title(xlab="Samples",cex=2, line=1)
+dev.off()
+```
+
+#MDS plots generation after filtering
+```{r}
+pal = brewer.pal(8, "Dark2")
+mds1Sw = plotMDS(mValsSw, top=1000, gene.selection="common",dim.plot=c(1,2))
+mds2Sw = plotMDS(mValsSw, top=1000, gene.selection="common",dim.plot=c(1,3))
+mds3Sw = plotMDS(mValsSw, top=1000, gene.selection="common",dim.plot=c(2,3))
+mds4Sw = plotMDS(mValsSw, top=1000, gene.selection="common",dim.plot=c(3,4))
+pdf("MDS_plot_normalised_motor_impairment.pdf",height=14,width=14)
+par(mfrow=c(2,2))
+plotMDS(mds1Sw, xlab="Dimension 1", ylab="Dimension 2",col=pal[as.factor(targets_gen$ABCtotal)],dim=c(1,2), labels=targets_gen$casenum)
+legend("bottomright",bg="white",col=pal,cex=.7,pch=1,legend=0:38)
+plotMDS(mds2Sw, xlab="Dimension 1", ylab="Dimension 3",col=pal[as.factor(targets_gen$ABCtotal)],dim=c(1,3), labels=targets_gen$casenum)
+legend("bottomright",bg="white",col=pal,cex=.7,pch=1,legend=0:38)
+plotMDS(mds3Sw, xlab="Dimension 2", ylab="Dimension 3",col=pal[as.factor(targets_gen$ABCtotal)],dim=c(2,3), labels=targets_gen$casenum)
+legend("bottomright",bg="white",col=pal,cex=.7,pch=1,legend=0:38)
+plotMDS(mds4Sw, xlab="Dimension 3", ylab="Dimension 4",col=pal[as.factor(targets_gen$ABCtotal)],dim=c(3,4), labels=targets_gen$casenum)
+legend("bottomright",bg="white",col=pal,cex=.7,pch=1,legend=0:38)
+plotMDS(mds1Sw, xlab="Dimension 1", ylab="Dimension 
+ 2",col=pal[as.factor(targets_gen$CP)],dim=c(1,2), labels=targets_gen$casenum)
+legend("bottomright",bg="white",col=pal,cex=.7,pch=1,legend=0:1)
+plotMDS(mds2Sw, xlab="Dimension 1", ylab="Dimension 3",col=pal[as.factor(targets_gen$CP)],dim=c(1,3), labels=targets_gen$casenum)
+legend("bottomright",bg="white",col=pal,cex=.7,pch=1,legend=0:1)
+plotMDS(mds3Sw, xlab="Dimension 2", ylab="Dimension 3",col=pal[as.factor(targets_gen$CP)],dim=c(2,3), labels=targets_gen$casenum)
+legend("bottomright",bg="white",col=pal,cex=.7,pch=1,legend=0:1)
+plotMDS(mds4Sw, xlab="Dimension 3", ylab="Dimension 4",col=pal[as.factor(targets_gen$CP)],dim=c(3,4), labels=targets_gen$casenum)
+legend("bottomright",bg="white",col=pal,cex=.7,pch=1,legend=0:1)
+plotMDS(mds1Sw, xlab="Dimension 1", ylab="Dimension 
+ 2",col=pal[as.factor(targets_gen$sex)],dim=c(1,2), labels=targets_gen$casenum)
+legend("bottomright",bg="white",col=pal,cex=.7,pch=1,legend=c("male","female"))
+plotMDS(mds2Sw, xlab="Dimension 1", ylab="Dimension 3",col=pal[as.factor(targets_gen$sex)],dim=c(1,3), labels=targets_gen$casenum)
+legend("bottomright",bg="white",col=pal,cex=.7,pch=1,legend=c("male","female"))
+plotMDS(mds3Sw, xlab="Dimension 2", ylab="Dimension 3",col=pal[as.factor(targets_gen$sex)],dim=c(2,3), labels=targets_gen$casenum)
+legend("bottomright",bg="white",col=pal,cex=.7,pch=1,legend=c("male","female"))
+plotMDS(mds4Sw, xlab="Dimension 3", ylab="Dimension 4",col=pal[as.factor(targets_gen$sex)],dim=c(3,4), labels=targets_gen$casenum)
+legend("bottomright",bg="white",col=pal,cex=.7,pch=1,legend=c("male","female"))
+plotMDS(mds1Sw, xlab="Dimension 1", ylab="Dimension 
+ 2",col=pal[as.factor(targets_gen$BPD_36_numeric)],dim=c(1,2), labels=targets_gen$casenum)
+legend("bottomright",bg="white",col=pal,cex=.7,pch=1,legend=0:1)
+plotMDS(mds2Sw, xlab="Dimension 1", ylab="Dimension 3",col=pal[as.factor(targets_gen$BPD_36_numeric)],dim=c(1,3), labels=targets_gen$casenum)
+legend("bottomright",bg="white",col=pal,cex=.7,pch=1,legend=0:1)
+plotMDS(mds3Sw, xlab="Dimension 2", ylab="Dimension 3",col=pal[as.factor(targets_gen$BPD_36_numeric)],dim=c(2,3), labels=targets_gen$casenum)
+legend("bottomright",bg="white",col=pal,cex=.7,pch=1,legend=0:1)
+plotMDS(mds4Sw, xlab="Dimension 3", ylab="Dimension 4",col=pal[as.factor(targets_gen$BPD_36_numeric)],dim=c(3,4), labels=targets_gen$casenum)
+legend("bottomright",bg="white",col=pal,cex=.7,pch=1,legend=0:1)
+plotMDS(mds1Sw, xlab="Dimension 1", ylab="Dimension 
+ 2",col=pal[as.factor(targets_gen$Twin_Group)],dim=c(1,2), labels=targets_gen$casenum)
+legend("bottomright",bg="white",col=pal,cex=.7,pch=1,legend=0:1)
+plotMDS(mds2Sw, xlab="Dimension 1", ylab="Dimension 3",col=pal[as.factor(targets_gen$Twin_Group)],dim=c(1,3), labels=targets_gen$casenum)
+legend("bottomright",bg="white",col=pal,cex=.7,pch=1,legend=0:1)
+plotMDS(mds3Sw, xlab="Dimension 2", ylab="Dimension 3",col=pal[as.factor(targets_gen$Twin_Group)],dim=c(2,3), labels=targets_gen$casenum)
+legend("bottomright",bg="white",col=pal,cex=.7,pch=1,legend=0:1)
+plotMDS(mds4Sw, xlab="Dimension 3", ylab="Dimension 4",col=pal[as.factor(targets_gen$Twin_Group)],dim=c(3,4), labels=targets_gen$casenum)
+legend("bottomright",bg="white",col=pal,cex=.7,pch=1,legend=0:1)
+plotMDS(mds1Sw, xlab="Dimension 1", ylab="Dimension 
+ 2",col=pal[as.factor(targets_gen$postnatal_steroids)],dim=c(1,2), labels=targets_gen$casenum)
+legend("bottomright",bg="white",col=pal,cex=.7,pch=1,legend=0:1)
+plotMDS(mds2Sw, xlab="Dimension 1", ylab="Dimension 3",col=pal[as.factor(targets_gen$postnatal_steroids)],dim=c(1,3), labels=targets_gen$casenum)
+legend("bottomright",bg="white",col=pal,cex=.7,pch=1,legend=0:1)
+plotMDS(mds3Sw, xlab="Dimension 2", ylab="Dimension 3",col=pal[as.factor(targets_gen$postnatal_steroids)],dim=c(2,3), labels=targets_gen$casenum)
+legend("bottomright",bg="white",col=pal,cex=.7,pch=1,legend=0:1)
+plotMDS(mds4Sw, xlab="Dimension 3", ylab="Dimension 4",col=pal[as.factor(targets_gen$postnatal_steroids)],dim=c(3,4), labels=targets_gen$casenum)
+legend("bottomright",bg="white",col=pal,cex=.7,pch=1,legend=0:1)
+dev.off()
+```
+
+#Principal Component Analysis (PCA)
+```{r}
+fit <- prcomp(t(mValsSw),center = TRUE, scale = TRUE,retx=TRUE)
+loadings = fit$x
+plot(fit,type="lines")
+nGenes = nrow(mValsSw)
+nSamples = ncol(mValsSw)
+datTraits = targets_gen[,c(3,9,15,25,38,39,49,50)]
+moduleTraitCor = cor(loadings[,1:6], datTraits, use = "p")
+moduleTraitPvalue = corPvalueStudent(moduleTraitCor, nSamples)
+par(cex=0.75, mar = c(6, 8.5, 3, 3))
+textMatrix = paste(signif(moduleTraitCor, 2), "\n(", signif(moduleTraitPvalue, 1), ")", sep = "");
+dim(textMatrix) = dim(moduleTraitCor)
+pdf("PCA_heatmap_motor_impairment_blood.pdf",height=8,width=8)
+labeledHeatmap(Matrix = t(moduleTraitCor), xLabels = colnames(loadings[,1:6]), yLabels = names(datTraits), colorLabels = FALSE, colors = blueWhiteRed(6), textMatrix = t(textMatrix), setStdMargins = FALSE, cex.text = 0.5, cex.lab.y = 0.6, zlim = c(-1,1), main = paste("PCA-trait relationships: Top principal components"))
+dev.off()
+```
+

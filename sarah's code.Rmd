@@ -9,6 +9,7 @@ output: html_document
 baseDir=("/group/canc2/puumba/Data/InfiniumData/jen. snow/project/Idat-SDF")
 library(minfi)
 targets_gen2 <- read.metharray.sheet(baseDir)
+ann450 = getAnnotation(IlluminaHumanMethylation450kanno.ilmn12.hg19)
 library(ChAMP)
 myLoad <- champ.load(directory=baseDir,
                      filterXY=TRUE,
@@ -38,24 +39,22 @@ champ.QC(beta=myNorm,
 
 SVD
 ```{r}
-library(tidyverse)
+library(dplyr, warn.conflicts = FALSE)
 subpheno <- myLoad$pd %>%
-  select(ABCtotal_cutoff,
-         postnatal_steroids,
+  dplyr::select(ABCtotal_cutoff,
          ga_week_cutoff,
          sex,
-         weight.SDS,
          Slide,
          Array,
-         BPD_36_numeric,
          CP,
-         preeclampsia_numeric,
-         delivery_numeric,
-         infertility_numeric,
-         any_surfactant_numeric,
-         IQ_group,
-         BMI_group,
-         Twin_Group)
+        nRBC,
+         Bcell,
+         Mono,
+        NK,
+         CD8T,
+         CD4T,
+        Twin_Group)
+subpheno2<-subpheno%>%rename(MABC=ABCtotal_cutoff, GA=ga_week_cutoff) 
 champ.SVD(beta=myNorm,
           pd=subpheno,
           resultsDir="./CHAMP_SVDimages_Sarah/")
@@ -86,6 +85,63 @@ champ.SVD(beta=myCombat,
 
 ```
 Linear regression
+subpheno=phenotype table
+mycombat=DNA matrix
 ```{r}
+subpheno2<- subpheno[-which(subpheno$ABCtotal_cutoff==0),]
+mDat =myCombat[,-which(subpheno$ABCtotal_cutoff==0)]
+design <- model.matrix(~ABCtotal_cutoff+sex+ga_week_cutoff+nRBC+ Bcell+Mono+NK+CD8T+
+CD4T, data=subpheno2)
+fit <- lmFit(mDat, design)
+fit2 <- eBayes(fit)
+summary(decideTests(fit2,p.value = 0.05))
+top = topTable(fit2,coef="ABCtotal_cutoff",num=Inf)
+ann_sub = 
+  ann450[,c("chr","pos","strand","Name","Islands_Name","Relation_to_Island","UCSC_RefGene_Name","UCSC_RefGene_Group")]
+output = merge(ann450,top,by.x="Name",by.y="row.names")
+#output_full_epicanno = merge(ann_epic,top,by.x="Name",by.y="row.names")
+write.csv(output[order(output$adj.P.Val),],file="Fullcohort_MABC_top_dmps_CHAMP.csv",row.names=FALSE)
+head(top)
+CHAMP<- limma_confects(fit,coef ="ABCtotal_cutoff", fdr = 0.05, step = 0.001, trend = FALSE,full = FALSE)
+Mabc<-CHAMP[1:1000]
+fil_CHAMP <- tempfile("CHAMP", fileext = ".rds")
+saveRDS(CHAMP, file = "fil_CHAMP", ascii = FALSE, version = NULL,
+        compress = TRUE, refhook = NULL)
+
+
+```{r}
+#Gene Ontology analysis (gometh): top 1000 probes
+#after sorting csv by pvalue
+baseDir=("/group/canc2/puumba/Data/InfiniumData/jen.snow/current.results")
+res_CHAMP <- readRDS("fil_CHAMP", refhook = NULL)
+sigCpGs_1k = res_CHAMP
+#gometh()
+par(mfrow=c(1,1))
+gometh_1k <- gometh(sig.cpg=sigCpGs_1k, all.cpg=NULL, plot.bias=TRUE)
+gometh_kegg <- gometh(sig.cpg = sigCpGs_1k, all.cpg = NULL, collection = "KEGG", prior.prob=TRUE)
+topKEGG(gometh_kegg)
+write.csv(gometh_1k, file = "GOterms_1k_mabc_CHAMP.csv", row.names = TRUE)
+write.csv(gometh_kegg, file = "GOmeth_kegg__mabc_CHAMP.csv", row.names = TRUE)
+#top GO terms
+topGO(gometh_1k, ontology = "BP", number = 20L)
+## Total number of significant GO categories at 5% FDR
+sum(gometh_kegg$FDR<0.5) 
+```
+```{r}
+library("DMRcate")
+deign<-na.omit(design)
+myannotation <- cpg.annotate("array", mDat, analysis.type="differential", design=deign, coef="ABCtotal_cutoff", fdr = 0.1)
+dmrcoutput <- dmrcate(myannotation, lambda=1000, C=2, pcutoff = 0.05)
+results.ranges <- extractRanges(dmrcoutput, genome = "hg19") 
+head(dmrcoutput$results)
+length(dmrcoutput$results)
+write.csv(dmrcoutput$results, file = "dmrcoutput.csv", row.names = TRUE)
+coords <- strsplit2(dmrcoutput$results$coord[1],":")
+chrom_dmrc <- coords[1]
+start_dmrc <- as.numeric(strsplit2(coords[2],"-")[1])
+end_dmrc <- as.numeric(strsplit2(coords[2],"-")[2]) 
+
+
 
 ```
+

@@ -5,15 +5,13 @@ output: html_document
 library("eulerr") 
 confects
 
-readRDS("fil", refhook = NULL)
-sig
-confects_Bio_down<- colnames(subset(sig,effect<0)) 
-confects_bio_up<-colnames(subset(sig,effect>0)) 
-v1 <- list("Maksimovic et al up"=confects_bio_up, "Maksimovic et al dn"=confects_Bio_down,   "CHAMP up"=dge_deseq2_up,"CHAMP dn"=dge_deseq2_dn) plot(euler(v1),quantities = TRUE) 
+fil_bio<-readRDS("fil", refhook = NULL)
+fil_champ <-readRDS("fil_CHAMP", refhook = NULL)
+v1 <- list("Maksimovic et al up"=fil_bio, "CHAMP"=fil_champ) plot(euler(v1),quantities = TRUE) 
 #JACCARD 
-length(intersect(x,y) ) / length(union(x,y)) 
+length(intersect(fil_bio,fil_champ) ) / length(union(fil_bio,fil_champ)) 
 #SPEARMAN
-cor<-cor(x, y,  method = "spearman", use = "complete.obs")
+cor<-cor(fil_bio,fil_champ, method = "spearman", use = "complete.obs")
 ggplot(data = cor, aes(x=Var1, y=Var2, fill=value)) + 
   geom_tile()
 
