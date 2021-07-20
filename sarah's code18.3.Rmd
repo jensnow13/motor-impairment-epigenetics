@@ -1,0 +1,178 @@
+---
+title: "sarah's code"
+output: html_document
+---
+
+```
+```
+```{r}
+baseDir=("/group/canc2/puumba/Data/InfiniumData/jen. snow/project/Idat-SDF")
+library(minfi)
+targets_gen2 <- read.metharray.sheet(baseDir)
+ann450 = getAnnotation(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+library(ChAMP)
+myLoad <- champ.load(directory=baseDir,
+                     filterXY=TRUE,
+                     filterSNPs=TRUE,
+                     arraytype="450K")
+```
+
+quality control
+```{r}
+champ.QC(beta=myLoad$beta,
+         pheno=myLoad$pd$CP,
+         resultsDir=baseDir,
+         dendrogram=FALSE)
+```
+
+#Normalize
+```
+```
+```{r}
+myNorm <- champ.norm(arraytype="450K")
+
+champ.QC(beta=myNorm,
+         pheno=myLoad$pd$CP,
+         resultsDir=baseDir,
+         dendrogram=FALSE)
+```
+
+SVD
+```{r}
+library(dplyr, warn.conflicts = FALSE)
+subpheno <- myLoad$pd %>%
+  dplyr::select(ABCtotal_cutoff,
+         ga_week_cutoff,
+         sex,
+         Slide,
+         Array,
+         CP,
+        nRBC,
+         Bcell,
+         Mono,
+        NK,
+         CD8T,
+         CD4T,
+         Gran)
+champ.SVD(beta=myNorm,
+          pd=subpheno,
+          resultsDir="./CHAMP_SVDimages_Sarah/")
+
+```
+#In case you want to adjust for batch
+```{r}
+library(sva)
+M <- logit2(myNorm)
+modcombat <- model.matrix(~1, data=subpheno)
+batch <- subpheno$Slide
+myCombat <- ComBat(dat = M, batch = batch, mod = modcombat)
+myCombat <- ilogit2(myCombat)
+
+champ.SVD(beta=myCombat,
+          pd=subpheno,
+          resultsDir="./CHAMP_SVDimages_Sarah_batchcorrected/")
+library(sva)
+M <- logit2(myCombat)
+modcombat <- model.matrix(~1, data=subpheno)
+batch <- subpheno$Array
+myCombat <- ComBat(dat = M, batch = batch, mod = modcombat)
+myCombat <- ilogit2(myCombat)
+
+champ.SVD(beta=myCombat,
+          pd=subpheno,
+          resultsDir="./CHAMP_SVDimages_Sarah_batchandpositioncorrected/")
+
+```
+Linear regression
+subpheno=phenotype table
+mycombat=DNA matrix
+```{r}
+subpheno2<- subpheno[-which(subpheno$ABCtotal_cutoff==0),]
+mDat =myCombat[,-which(subpheno$ABCtotal_cutoff==0)]
+design <- model.matrix(~ABCtotal_cutoff+sex+ga_week_cutoff+nRBC+ Bcell+Mono+NK+CD8T+
+CD4T, data=subpheno2)
+fit <- lmFit(mDat, design)
+fit2 <- eBayes(fit)
+summary(decideTests(fit2,p.value = 0.05))
+top = topTable(fit2,coef="ABCtotal_cutoff",num=Inf)
+ann_sub = 
+  ann450[,c("chr","pos","strand","Name","Islands_Name","Relation_to_Island","UCSC_RefGene_Name","UCSC_RefGene_Group")]
+output = merge(ann450,top,by.x="Name",by.y="row.names")
+#output_full_epicanno = merge(ann_epic,top,by.x="Name",by.y="row.names")
+write.csv(output[order(output$adj.P.Val),],file="Fullcohort_MABC_top_dmps_CHAMP.csv",row.names=FALSE)
+head(top)
+CHAMP<- limma_confects(fit,coef ="ABCtotal_cutoff", fdr = 0.05, step = 0.001, trend = FALSE,full = FALSE)
+Mabc<-CHAMP[1:1000]
+fil_CHAMP <- tempfile("CHAMP", fileext = ".rds")
+saveRDS(CHAMP, file = "fil_CHAMP", ascii = FALSE, version = NULL,
+        compress = TRUE, refhook = NULL)
+
+
+```{r}
+#Gene Ontology analysis (gometh): top 1000 probes
+#after sorting csv by pvalue
+baseDir=("/group/canc2/puumba/Data/InfiniumData/jen. snow")
+res <- read.csv("Fullcohort_m_top_dmps_champ.csv", header = TRUE)
+sigCpGs_1k = res_CHAMP$rank[1:1000]
+#total number
+length(sigCpGs_1k)
+sigCpGs_1k = as.character(sigCpGs_1k)
+all = res_CHAMP$rank
+length(all)
+#gometh()
+par(mfrow=c(1,1))
+gometh_1k <- gometh(sig.cpg=sigCpGs_1k, all.cpg=all, plot.bias=TRUE)
+gometh_kegg <- gometh(sig.cpg = sigCpGs_1k, all.cpg = all, collection = "KEGG", prior.prob=TRUE)
+topKEGG(gometh_kegg)
+write.csv(gometh_1k, file = "GOterms_1k_mabc_CHAMP.csv", row.names = TRUE)
+write.csv(gometh_kegg, file = "GOmeth_kegg__mabc_CHAMP.csv", row.names = TRUE)
+#top GO terms
+topGO(gometh_1k, ontology = "BP", number = 20L)
+## Total number of significant GO categories at 5% FDR
+sum(gometh_kegg$FDR<0.5) 
+```
+```{r}
+library("DMRcate")
+deign<-na.omit(design)
+myannotation <- cpg.annotate("array", mDat, analysis.type="differential", design=deign, coef="ABCtotal_cutoff", fdr = 0.1)
+dmrcoutput <- dmrcate(myannotation, lambda=1000, C=2, pcutoff = 0.05)
+results.ranges <- extractRanges(dmrcoutput, genome = "hg19") 
+head(dmrcoutput$results)
+length(dmrcoutput$results)
+write.csv(dmrcoutput$results, file = "dmrcoutput.csv", row.names = TRUE)
+coords <- strsplit2(dmrcoutput$results$coord[1],":")
+chrom_dmrc <- coords[1]
+start_dmrc <- as.numeric(strsplit2(coords[2],"-")[1])
+end_dmrc <- as.numeric(strsplit2(coords[2],"-")[2]) 
+
+
+
+```
+```{r}
+mDat =mValsSq
+design <- model.matrix(~CP+sex+ga_week+nRBC+Bcell+Mono+NK+CD8T+
+CD4T+Gran, data=targets_gen2)
+fit <- lmFit(mDat, design)
+fit2 <- eBayes(fit)
+summary(decideTests(fit2,p.value = 0.05))
+top = topTable(fit2,coef="CP",num=Inf)
+ann_sub = 
+  ann450[,c("chr","pos","strand","Name","Islands_Name","Relation_to_Island","UCSC_RefGene_Name","UCSC_RefGene_Group")]
+output = merge(ann450,top,by.x="Name",by.y="row.names")
+#output_full_epicanno = merge(ann_epic,top,by.x="Name",by.y="row.names")
+write.csv(output[order(output$adj.P.Val),],file="Fullcohort_CP_top_dmps_BIO2.csv",row.names=FALSE)
+ confects<-limma_confects(fit,coef ="CP", fdr = 0.05, step = 0.001, trend = FALSE,full = FALSE)
+confects          
+head(output)
+MOHANDASUP<-list(c("cg00376816", "cg25011252", "cg05707458", "cg14163311", "cg16602500", "cg06419846", "cg03929569", "cg17512380", "cg15613292", "cg00263248", "cg19540797", "cg08360638", "cg07728874", "cg22230912", "cg13505608", "cg04975778"))
+MOHANDASDOWN<-list(c("cg04242728","cg03907855","cg18369327","cg18768238","cg14414943","cg19607845","cg19942731","cg14073571","cg03106245","cg08936645","cg02806715", "ch.10.89216809R","cg11348257","cg07011093","cg09335613","cg12306086"))
+stats<-output$t
+names(stats)<-output$Name
+fgseaResup<- fgsea(MOHANDASUP,stats=stats,nperm=1000, maxSize=1000)
+fgseaResdown <- fgsea(MOHANDASDOWN,stats=stats,nperm=1000, maxSize=1000)
+plotEnrichment(MOHANDASUP[[1]],stats)+ labs(title="CP-hypermethylation")
+plotEnrichment(MOHANDASDOWN[[1]],stats)+ labs(title="CP-hypomethylation")
+fgseaResdown
+fgseaResup
+```
+
