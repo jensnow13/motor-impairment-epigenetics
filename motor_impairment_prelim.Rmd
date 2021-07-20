@@ -31,7 +31,7 @@ na.omit(targets_gen)
 rgSet = read.metharray.exp(targets = targets_gen)
 sampleNames(rgSet) = targets_gen$casenum
 
-#Quality control
+#Quality control- filtering of poor performing probes
 detP = detectionP(rgSet)
 qcReport(rgSet, sampNames = targets_gen$casenum, pdf="qc-report_motor_impairment.pdf")
 pdf("mean_detection_motor_impairment.pdf",width=14)
@@ -44,7 +44,7 @@ dev.off()
 #Preprocessing
 mset.raw = preprocessRaw(rgSet)
 
-#Data exploration
+#Data exploration before normalisation
 pdf("mds_plots_motor_impairment.pdf",width=14)
 par(mfrow=c(1,2))
 mdsPlot(mset.raw, sampGroups = targets_gen$ABCtotal, sampNames=targets_gen$casename,legendPos="bottom",main="MABCtotal")
@@ -94,6 +94,7 @@ legend("topleft", legend=c("Low","Moderate", "High"), fill=age.pal, cex=.7)
 
 wilcox.test(b[,"Gran"],c[,"Gran"], paired=FALSE)
 
+#quality control -filtering of probes
 #None of the p-values are less than 0.05 - separate word document in folder
 #Filtering low quality probes
 ```{r}
@@ -133,7 +134,7 @@ title(xlab="Samples",cex=2, line=1)
 dev.off()
 ```
 
-#MDS plots generation after filtering
+# Data exploration- use this and PCA to look for clinically advised and techniacal variables
 ```{r}
 pal = brewer.pal(8, "Dark2")
 mds1Sw = plotMDS(mValsSw, top=1000, gene.selection="common",dim.plot=c(1,2))
