@@ -44,7 +44,7 @@ rgSet = read.metharray.exp(targets = targets_gen)
 sampleNames(rgSet) = targets_gen$casenum
 
 ```
-#Quality control
+#Quality control-poor performing probes
 ```{r}
 detP = detectionP(rgSet)
 qcReport(rgSet, sampNames=targets_gen$casenum, pdf="qc-report_motor_impairment.pdf")
@@ -59,7 +59,7 @@ dev.off()
 ```{r}
 mset.raw = preprocessRaw(rgSet)
 ```
-#Data exploration
+#Data exploration before normalisation
 ```{r}
 pdf("mds_plots_motor_impairment.pdf",width=14)
 par(mfrow=c(1,2))
@@ -136,6 +136,7 @@ axis(1, at=0:5*3+ 1.5, labels=colnames(a), tick=TRUE)
 pdf("cell_type_boxplot_motor_impairment.pdf",width=14)
 boxplot(cellCounts_new,xlab="Cell type proportion",ylab="cell percentage")
 ```
+#Quality control-filtering probes
 #None of the p-values are less than 0.05 - separate word document in folder
 #Filtering low quality probes
 ```{r}
@@ -176,7 +177,8 @@ pdf("rle_plot_sep9.pdf")
 boxplot(YSw,outline=FALSE,ylim=c(-1.5,1.5), ylab="Relative Log Methylation Value", cols=as.character(factor(targets_gen$ABCtotal_cutoff,)),xaxt="none")
 title(xlab="Samples",cex=2, line=1)
 dev.off()
-```
+``
+#Data exploration after filtering and normalisation- use this to look at cinically advised and technical variables`
 ```{r}
 #MDS plots generation after filtering 
 pdf("mds_plots_motor_impairment_normalisation.pdf",width=14)
@@ -262,13 +264,14 @@ dev.off()
 
 ```
 
-Probe-wise differential methylation analysis
+#Probe-wise differential methylation analysis- DMP finding
 
 ```{r}sex<-targets_gen$sex
 ga<-targets_gen$ga_week
 design <- model.matrix(~ABCtotal+sex+ga, data=targets_gen)
 ```
 ```{r}
+#for when NAs are present in data
 targetsgen3<-targets_gen2[-which(targets_gen2$ABCtotal_cutoff==0),]
 mDat =mValsSq[,-which(targets_gen2$ABCtotal_cutoff==0)]
 bDat = ilogit2(mDat)
@@ -294,7 +297,7 @@ confects
 ```
 
 ```{r}
-
+#for when no NAS are present
 mDat =mValsSq
 design <- model.matrix(~CP+sex+ga_week+nRBC+Bcell+Mono+NK+CD8T+
 CD4T+Gran, data=targets_gen2)
@@ -312,6 +315,26 @@ confects
 head(output)
 
 ```
+#DMRCATE- DMR finding-restrictions apply 
+```{r}
+
+library("DMRcate")
+myannotation <- cpg.annotate("array", mDat, analysis.type="differential", design=design, coef="ABCtotal_cutoff", fdr = 0.1)
+if (output$P.value > 0.05) {dmr <- run_dmrcate(mx=mxs,design=design) }
+dmrcoutput <- dmrcate(myannotation, lambda=1000, C=2, pcutoff = 0.05)
+results.ranges <- extractRanges(dmrcoutput, genome = "hg19") 
+head(dmrcoutput$results)
+length(dmrcoutput$results)
+write.csv(dmrcoutput$results, file = "dmrcoutput.csv", row.names = TRUE)
+coords <- strsplit2(dmrcoutput$results$coord[1],":")
+chrom_dmrc <- coords[1]
+start_dmrc <- as.numeric(strsplit2(coords[2],"-")[1])
+end_dmrc <- as.numeric(strsplit2(coords[2],"-")[2]) 
+minbase_dmrc <- start - (0.25*(end-start))
+maxbase_dmrc <- end + (0.25*(end-start))
+```
+
+#bumphunter -dmr finding
 ```
 preprocessNoob(rgSet, offset = 15, dyeCorr = TRUE, verbose = FALSE,
                dyeMethod=c("single", "reference"))
@@ -323,7 +346,7 @@ names(dmrs_0.02)
 head(dmrs_0.02$table, n=20)
 write.csv(dmrs_0.02$table, file = "bumphunter_1000.csv", row.names = TRUE)
 ```
-
+#gene set enrichment for DMPS
 ```{r}
 MOHANDASUP<-list(c("cg00376816", "cg25011252", "cg05707458", "cg14163311", "cg16602500", "cg06419846", "cg03929569", "cg17512380", "cg15613292", "cg00263248", "cg19540797", "cg08360638", "cg07728874", "cg22230912", "cg13505608", "cg04975778"))
 MOHANDASDOWN<-list(c("cg04242728","cg03907855","cg18369327","cg18768238","cg14414943","cg19607845","cg19942731","cg14073571","cg03106245","cg08936645","cg02806715", "ch.10.89216809R","cg11348257","cg07011093","cg09335613","cg12306086"))
@@ -337,12 +360,32 @@ pdf("CP-plotenrichment_bio.pdf",height=14,width=14)
 plotEnrichment(MOHANDASDOWN,stats=stats, gseaParam = 1, ticksSize = 0.2)+ labs(title="CP-hypomethylation")
 
 ```
-
-
-
-
+#Gene Ontology analysis (gometh): top 1000 probes
+#after sorting csv by pvalue
 ```{r}
-#scatter plots, histogram and boxplots
+baseDir=("/group/canc2/puumba/Data/InfiniumData/jen.snow/current.results")
+res <- read.csv("Fullcohort_MABC_top_dmps_p=0.05BIO2.csv", header = TRUE)
+sigCpGs_1k = res$Name[1:1000]
+#total number
+length(sigCpGs_1k)
+sigCpGs_1k = as.character(sigCpGs_1k)
+all = res$Name
+length(all)
+#gometh()
+par(mfrow=c(1,1))
+gometh_1k <- gometh(sig.cpg=sigCpGs_1k, all.cpg=NULL, plot.bias=TRUE)
+gometh_kegg <- gometh(sig.cpg = sigCpGs_1k, all.cpg = NULL, collection = "KEGG", prior.prob=TRUE)
+topKEGG(gometh_kegg)
+write.csv(gometh_1k, file = "GOterms_1k_MABC.csv", row.names = TRUE)
+write.csv(gometh_kegg, file = "GOmeth_kegg_MABC.csv", row.names = TRUE)
+#top GO terms
+topGO(gometh_1k, ontology = "BP", number = 20L)
+## Total number of significant GO categories at 5% FDR
+sum(gometh_kegg$FDR<0.5) 
+```
+
+#random plot making- also look at gviz website
+```{r}
 baseDir=("/group/canc2/puumba/Data/InfiniumData/jen. snow")
 res = read.csv("top_CPG.csv")
 Mabc<-res$MABC[1:176]
@@ -361,41 +404,6 @@ ggplot(targets_gen2, aes(x=ABCtotal_cutoff, y=Mono)) + geom_boxplot()
 ggplot(targets_gen2, aes(x=ABCtotal_cutoff, y=Bcell)) + geom_boxplot()
 ggplot(targets_gen2, aes(x=ABCtotal_cutoff, y=nRBC)) + geom_boxplot()
 ggplot(targets_gen2, aes(x=ABCtotal_cutoff, y=NK)) + geom_boxplot()
-dev.off()
-```
-
-
-```{r}
-
-```
-
-
-```{r}
-
-library("DMRcate")
-myannotation <- cpg.annotate("array", mDat, analysis.type="differential", design=design, coef="ABCtotal_cutoff", fdr = 0.1)
-if (output$P.value > 0.05) {dmr <- run_dmrcate(mx=mxs,design=design) }
-dmrcoutput <- dmrcate(myannotation, lambda=1000, C=2, pcutoff = 0.05)
-results.ranges <- extractRanges(dmrcoutput, genome = "hg19") 
-head(dmrcoutput$results)
-length(dmrcoutput$results)
-write.csv(dmrcoutput$results, file = "dmrcoutput.csv", row.names = TRUE)
-coords <- strsplit2(dmrcoutput$results$coord[1],":")
-chrom_dmrc <- coords[1]
-start_dmrc <- as.numeric(strsplit2(coords[2],"-")[1])
-end_dmrc <- as.numeric(strsplit2(coords[2],"-")[2]) 
-minbase_dmrc <- start - (0.25*(end-start))
-maxbase_dmrc <- end + (0.25*(end-start))
-```
-```{r}
-
-```
-
-
-
-
-
-```{r}
 
 #To create stacked barplots
 ggplot(targets_gen, aes(fill=sex, y=ABCtotal, x= ABCtotal)) + geom_bar(position="stack", stat="identity")
@@ -408,32 +416,6 @@ ggplot(targets_gen2, aes(x=, y=ABCtotal)) + geom_point()
 #to create boxplots for cell types
 ggplot(targets_gen, aes(x=celltype, y=percentage, fill=ABCtotal_cutoff)) +
   geom_boxplot() 
-
-```{r}
-#Gene Ontology analysis (gometh): top 1000 probes
-#after sorting csv by pvalue
-baseDir=("/group/canc2/puumba/Data/InfiniumData/jen.snow/current.results")
-res<- readRDS("fil", refhook = NULL)
-sigCpGs_1k = res
-#gometh()
-par(mfrow=c(1,1))
-gometh_1k <- gometh(sig.cpg=sigCpGs_1k, all.cpg=NULL, plot.bias=TRUE)
-gometh_kegg <- gometh(sig.cpg = sigCpGs_1k, all.cpg = all, collection = "KEGG", prior.prob=TRUE)
-topKEGG(gometh_kegg)
-write.csv(gometh_1k, file = "GOterms_1k_cp.csv", row.names = TRUE)
-write.csv(gometh_kegg, file = "GOmeth_kegg_cp.csv", row.names = TRUE)
-#top GO terms
-topGO(gometh_1k, ontology = "BP", number = 20L)
-## Total number of significant GO categories at 5% FDR
-```
-
-
-```{r}
-sum(gometh_kegg$FDR<0.5) 
-```
-
-
-```{r}
 
 baseDir=("/group/canc2/puumba/Data/InfiniumData/jen. snow")
 res <- read.csv("Fullcohort_CP_top_dmps_BIO2.csv", header = TRUE)
@@ -459,29 +441,7 @@ ggplot(res, aes(x=P.Value))+ geom_histogram(binwidth=0.05,col="red",
 
 ```
 
-```{r}
-#Gene Ontology analysis (gometh): top 1000 probes
-#after sorting csv by pvalue
-baseDir=("/group/canc2/puumba/Data/InfiniumData/jen.snow/current.results")
-res <- read.csv("Fullcohort_MABC_top_dmps_p=0.05BIO2.csv", header = TRUE)
-sigCpGs_1k = res$Name[1:1000]
-#total number
-length(sigCpGs_1k)
-sigCpGs_1k = as.character(sigCpGs_1k)
-all = res$Name
-length(all)
-#gometh()
-par(mfrow=c(1,1))
-gometh_1k <- gometh(sig.cpg=sigCpGs_1k, all.cpg=NULL, plot.bias=TRUE)
-gometh_kegg <- gometh(sig.cpg = sigCpGs_1k, all.cpg = NULL, collection = "KEGG", prior.prob=TRUE)
 
-write.csv(gometh_1k, file = "GOterms_1k_MABC.csv", row.names = TRUE)
-write.csv(gometh_kegg, file = "GOmeth_kegg_MABC.csv", row.names = TRUE)
-#top GO terms
-topGO(gometh_1k, ontology = "BP", number = 20L)
-## Total number of significant GO categories at 5% FDR
-sum(gometh_kegg$FDR<0.5) 
-```
 
 
 
