@@ -1,10 +1,9 @@
 ---
-title: "sarah's code"
+title: "CHAMP code"
 output: html_document
 ---
 
-```
-```
+#setup
 ```{r}
 baseDir=("/group/canc2/puumba/Data/InfiniumData/jen. snow/project/Idat-SDF")
 library(minfi)
@@ -17,7 +16,7 @@ myLoad <- champ.load(directory=baseDir,
                      arraytype="450K")
 ```
 
-quality control
+#quality control
 ```{r}
 champ.QC(beta=myLoad$beta,
          pheno=myLoad$pd$CP,
@@ -37,7 +36,7 @@ champ.QC(beta=myNorm,
          dendrogram=FALSE)
 ```
 
-SVD
+SVD-Data exploration
 ```{r}
 library(dplyr, warn.conflicts = FALSE)
 subpheno <- myLoad$pd %>%
@@ -87,6 +86,7 @@ Linear regression
 subpheno=phenotype table
 mycombat=DNA matrix
 ```{r}
+#when NAS are present
 subpheno2<- subpheno[-which(subpheno$ABCtotal_cutoff==0),]
 mDat =myCombat[,-which(subpheno$ABCtotal_cutoff==0)]
 design <- model.matrix(~ABCtotal_cutoff+sex+ga_week_cutoff+nRBC+ Bcell+Mono+NK+CD8T+
@@ -107,7 +107,41 @@ fil_CHAMP <- tempfile("CHAMP", fileext = ".rds")
 saveRDS(CHAMP, file = "fil_CHAMP", ascii = FALSE, version = NULL,
         compress = TRUE, refhook = NULL)
 
+```{r}
+#when no NAS are present
+mDat =mValsSq
+design <- model.matrix(~CP+sex+ga_week+nRBC+Bcell+Mono+NK+CD8T+
+CD4T+Gran, data=targets_gen2)
+fit <- lmFit(mDat, design)
+fit2 <- eBayes(fit)
+summary(decideTests(fit2,p.value = 0.05))
+top = topTable(fit2,coef="CP",num=Inf)
+ann_sub = 
+  ann450[,c("chr","pos","strand","Name","Islands_Name","Relation_to_Island","UCSC_RefGene_Name","UCSC_RefGene_Group")]
+output = merge(ann450,top,by.x="Name",by.y="row.names")
+#output_full_epicanno = merge(ann_epic,top,by.x="Name",by.y="row.names")
+write.csv(output[order(output$adj.P.Val),],file="Fullcohort_CP_top_dmps_BIO2.csv",row.names=FALSE)
+ confects<-limma_confects(fit,coef ="CP", fdr = 0.05, step = 0.001, trend = FALSE,full = FALSE)
+confects   
+...
+```{r}
+#DMR finding -dmrcate-restrictions apply
+library("DMRcate")
+deign<-na.omit(design)
+myannotation <- cpg.annotate("array", mDat, analysis.type="differential", design=deign, coef="ABCtotal_cutoff", fdr = 0.1)
+dmrcoutput <- dmrcate(myannotation, lambda=1000, C=2, pcutoff = 0.05)
+results.ranges <- extractRanges(dmrcoutput, genome = "hg19") 
+head(dmrcoutput$results)
+length(dmrcoutput$results)
+write.csv(dmrcoutput$results, file = "dmrcoutput.csv", row.names = TRUE)
+coords <- strsplit2(dmrcoutput$results$coord[1],":")
+chrom_dmrc <- coords[1]
+start_dmrc <- as.numeric(strsplit2(coords[2],"-")[1])
+end_dmrc <- as.numeric(strsplit2(coords[2],"-")[2]) 
 
+
+
+```
 ```{r}
 #Gene Ontology analysis (gometh): top 1000 probes
 #after sorting csv by pvalue
@@ -131,39 +165,9 @@ topGO(gometh_1k, ontology = "BP", number = 20L)
 ## Total number of significant GO categories at 5% FDR
 sum(gometh_kegg$FDR<0.5) 
 ```
+
 ```{r}
-library("DMRcate")
-deign<-na.omit(design)
-myannotation <- cpg.annotate("array", mDat, analysis.type="differential", design=deign, coef="ABCtotal_cutoff", fdr = 0.1)
-dmrcoutput <- dmrcate(myannotation, lambda=1000, C=2, pcutoff = 0.05)
-results.ranges <- extractRanges(dmrcoutput, genome = "hg19") 
-head(dmrcoutput$results)
-length(dmrcoutput$results)
-write.csv(dmrcoutput$results, file = "dmrcoutput.csv", row.names = TRUE)
-coords <- strsplit2(dmrcoutput$results$coord[1],":")
-chrom_dmrc <- coords[1]
-start_dmrc <- as.numeric(strsplit2(coords[2],"-")[1])
-end_dmrc <- as.numeric(strsplit2(coords[2],"-")[2]) 
-
-
-
-```
-```{r}
-mDat =mValsSq
-design <- model.matrix(~CP+sex+ga_week+nRBC+Bcell+Mono+NK+CD8T+
-CD4T+Gran, data=targets_gen2)
-fit <- lmFit(mDat, design)
-fit2 <- eBayes(fit)
-summary(decideTests(fit2,p.value = 0.05))
-top = topTable(fit2,coef="CP",num=Inf)
-ann_sub = 
-  ann450[,c("chr","pos","strand","Name","Islands_Name","Relation_to_Island","UCSC_RefGene_Name","UCSC_RefGene_Group")]
-output = merge(ann450,top,by.x="Name",by.y="row.names")
-#output_full_epicanno = merge(ann_epic,top,by.x="Name",by.y="row.names")
-write.csv(output[order(output$adj.P.Val),],file="Fullcohort_CP_top_dmps_BIO2.csv",row.names=FALSE)
- confects<-limma_confects(fit,coef ="CP", fdr = 0.05, step = 0.001, trend = FALSE,full = FALSE)
-confects          
-head(output)
+#gene set enrichment for DMPS
 MOHANDASUP<-list(c("cg00376816", "cg25011252", "cg05707458", "cg14163311", "cg16602500", "cg06419846", "cg03929569", "cg17512380", "cg15613292", "cg00263248", "cg19540797", "cg08360638", "cg07728874", "cg22230912", "cg13505608", "cg04975778"))
 MOHANDASDOWN<-list(c("cg04242728","cg03907855","cg18369327","cg18768238","cg14414943","cg19607845","cg19942731","cg14073571","cg03106245","cg08936645","cg02806715", "ch.10.89216809R","cg11348257","cg07011093","cg09335613","cg12306086"))
 stats<-output$t
